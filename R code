@@ -1,1 +1,167 @@
+getwd()
+species2<-read.csv2("fishinhk.txt")
+species<-as.vector(species2$taxa)
+library(bold)
+library(worms)
+library(tidyverse)
+
+###species name confirmation
+acceptednas1 <- wormsbynames(species[1:1000])
+acceptednas2 <- wormsbynames(species[1001:1219])
+
+acceptednas<-rbind(acceptednas1, acceptednas2)
+
+write.csv2(acceptednas, "fishinhk_worms.csv")
+acceptednamesclean<-na.omit(acceptednas$valid_name)
+
+###COI
+taxaBOLD1 <- bold_seqspec(acceptednas$valid_name[1:300],format = "tsv", marker = "COI-5P")
+taxaBOLD2 <- bold_seqspec(acceptednas$valid_name[301:600],format = "tsv", marker = "COI-5P")
+taxaBOLD3 <- bold_seqspec(acceptednas$valid_name[601:900],format = "tsv", marker = "COI-5P")
+taxaBOLD4 <- bold_seqspec(acceptednas$valid_name[901:1200],format = "tsv", marker = "COI-5P")
+taxaBOLD5 <- bold_seqspec(acceptednas$valid_name[1201:1219],format = "tsv", marker = "COI-5P")
+
+fishinhk_BOLD_coi<-rbind(taxaBOLD1,taxaBOLD2, taxaBOLD3, taxaBOLD4, taxaBOLD5)
+fishinhk_BOLD_coi$number<-str_count(fishinhk_BOLD_coi$nucleotides, pattern="[A-Z]")
+fishinhk_BOLD_coi$GenbankMined<-fishinhk_BOLD_coi$institution_storing=="Mined from GenBank, NCBI"
+fishinhk_COI_BOLD<-fishinhk_BOLD_coi[fishinhk_BOLD_coi$markercode=="COI-5P",]
+write.csv2(fishinhk_COI_BOLD, file="fishinhkCOI_BOLD.csv")
+
+fishinhkCOI_BOLD500<-fishinhk_COI_BOLD[fishinhk_COI_BOLD$number>500,]
+write.csv2(fishinhkCOI_BOLD500, file="fishinhkCOI_bold500.csv")
+
+
+
+###gapanalysis
+fishinhk_coi<-read.csv2(file = "fishinhkCOI_bold500.csv")
+fishinhk_checklist<-read.csv2(file = "fishinhk_worms.csv")
+
+uniquespecies_coi<-as.vector(unique(fishinhk_coi$species_name))
+species<-as.vector(fishinhk_checklist$valid_name)
+
+Gap_analysis_coi<-species %in% uniquespecies_coi
+
+List<-cbind(species, Gap_analysis_coi)
+write.csv2(List,"Gap_analysis_fishinhk_coi.csv")
+
+
+###gradesystem
+#library(devtools)
+#install_github("helixcn/seqRFLP")
+library(seqRFLP)
+library(bold)
+library(data.table)
+library(worms)
+library(stringr)
+library(readr)
+#library(fingerprint)
+library(dplyr)
+library(ggplot2)
+library(snakecase)
+
+Taxa_coi<-read.csv2(file = "fishinhkCOI_bold500.csv")
+
+taxon8_coi<-Taxa_coi
+taxon8_coi<-taxon8_coi[!(taxon8_coi$bin_uri == "" | is.na(taxon8_coi$bin_uri)), ]
+num_species=table(taxon8_coi$species_name)
+num_species=as.data.frame(num_species)
+names(num_species)=c("species_name","frequency_species")
+taxon8_coi$grade=NA
+taxon9_coi<-inner_join(taxon8_coi,num_species)
+taxon9_coi=data.frame(taxon9_coi$species_name,taxon9_coi$bin_uri,taxon9_coi$nucleotides,taxon9_coi$country,taxon9_coi$grade,taxon9_coi$frequency_species,taxon9_coi$number,taxon9_coi$family_name,taxon9_coi$order_name,taxon9_coi$class_name,taxon9_coi$sampleid,taxon9_coi$processid)
+names(taxon9_coi)=c("species","BIN","sequence","country","grade","species_frequency","base_number","family","order","class","sampleid","processid")
+
+
+taxon10_coi<-taxon9_coi%>% 
+  group_by(species) %>%
+  summarise(occurrence = n_distinct(BIN),
+            BIN = str_c(unique(BIN), collapse = ","))
+names(taxon10_coi)<-c("species","bin_per_species","BIN")
+
+taxon11_coi<-taxon9_coi%>% 
+  group_by(BIN) %>%
+  summarise(occurrence = n_distinct(species),
+            species = str_c(unique(species), collapse = ","))
+names(taxon11_coi)<-c("BIN","species_per_bin","species")
+
+taxon16_coi<-full_join(taxon9_coi,taxon10_coi,by = "species")
+taxon17_coi<-data.frame(taxon16_coi$species,taxon16_coi$BIN.x,taxon16_coi$sequence,taxon16_coi$country,taxon16_coi$grade,taxon16_coi$species_frequency,taxon16_coi$base_number,taxon16_coi$bin_per_species,taxon16_coi$family,taxon16_coi$order,taxon16_coi$class,taxon16_coi$sampleid,taxon16_coi$processid)
+
+
+names(taxon17_coi)<-c("species","BIN","COI_sequence","country","grade","species_frequency","base_number","BIN_per_species","family","order","class","sampleid","processid")
+
+taxon18_coi<-full_join(taxon17_coi,taxon11_coi,by="BIN")
+colnames(taxon18_coi)[colnames(taxon18_coi)=="species.x"]<- "species"
+taxon18_coi$species.y<-NULL
+
+taxon19_coi<-taxon18_coi %>%
+  mutate(grade = ifelse(species_per_bin>1,"Discordant",
+                        ifelse(BIN_per_species>1 & species_per_bin==1,"Complex",
+                               ifelse(BIN_per_species==1 & species_per_bin==1,"Concordant",NA))))
+taxon19_coi$BIN_per_species=NULL
+taxon19_coi$species_per_bin=NULL
+taxon19_coi$species_frequency=NULL
+taxon19_coi$sampleid=NULL
+
+taxon20_coi<-taxon18_coi %>%
+  mutate(grade = ifelse(species_per_bin>1,"Discordant",
+                        ifelse(BIN_per_species>1 & species_per_bin==1,"Complex",
+                               ifelse(BIN_per_species==1 & species_per_bin==1,"Concordant",NA))))
+taxon20_coi$COI_sequence=NULL
+taxon20_coi$country=NULL
+taxon20_coi$processid=NULL
+taxon20_coi$sampleid=NULL
+
+
+write.csv2(num_species, "num_species_fish.csv")
+write.csv2(taxon19_coi, "fishinhk_gradeSystem_coi.csv")
+write.csv2(taxon20_coi, "fishinhk_gradeSystem_coi_1.csv")
+write.csv2(taxon10_coi, "taxon10.csv")
+write.csv2(taxon11_coi, "taxon11.csv")
+
+###finalspecies list selection
+df<-read.csv2("fishinhk_worms.csv")
+cols_remain2<- c("valid_AphiaID","valid_name","valid_authority","kingdom","phylum","class","order","family","genus") #列名
+
+newdf<- df[ ,colnames(df) %in% cols_remain2]
+write.csv2(newdf, "Finalfishlistinhk.csv")
+
+
+
+
+
+
+
+
+
+#####NCBI data
+
+library(bold)
+library(tidyverse)
+library(rentrez)
+
+fishtaxa<-read.csv2("fishinhk_worms.csv")
+
+search_genbank_COI <- function(x){
+  query2 <- paste(x, "[Organism] AND (((COI[Gene] OR CO1[Gene] OR COXI[Gene] OR COX1[Gene]) AND (500[SLEN]:3000[SLEN])) OR complete genome[All Fields] OR mitochondrial genome[All Fields])")
+  COI<-entrez_search(db="nuccore", term=query2, retmax=10000)$count
+}
+
+GenBanktaxaCOI_1<-lapply(fishtaxa$valid_name[1:300], search_genbank_COI)
+GenBanktaxaCOI_2<-lapply(fishtaxa$valid_name[301:600], search_genbank_COI)
+GenBanktaxaCOI_3<-lapply(fishtaxa$valid_name[601:900], search_genbank_COI)
+GenBanktaxaCOI_4<-lapply(fishtaxa$valid_name[901:1200], search_genbank_COI)
+GenBanktaxaCOI_5<-lapply(fishtaxa$valid_name[1201:1219], search_genbank_COI)
+
+GenBanktaxaSCOIdf_1<-t(as.data.frame(GenBanktaxaCOI_1))
+GenBanktaxaSCOIdf_2<-t(as.data.frame(GenBanktaxaCOI_2))
+GenBanktaxaSCOIdf_3<-t(as.data.frame(GenBanktaxaCOI_3))
+GenBanktaxaSCOIdf_4<-t(as.data.frame(GenBanktaxaCOI_4))
+GenBanktaxaSCOIdf_5<-t(as.data.frame(GenBanktaxaCOI_5))
+
+write.csv2(GenBanktaxaSCOIdf_1, file="taxaGenbank_COI_1.csv")
+write.csv2(GenBanktaxaSCOIdf_2, file="taxaGenbank_COI_2.csv")
+write.csv2(GenBanktaxaSCOIdf_3, file="taxaGenbank_COI_3.csv")
+write.csv2(GenBanktaxaSCOIdf_4, file="taxaGenbank_COI_4.csv")
+write.csv2(GenBanktaxaSCOIdf_5, file="taxaGenbank_COI_5.csv")
 
