@@ -1,0 +1,124 @@
+awk '!/^>/ { printf "%s", $0; n = "\n" } /^>/ { print n $0; n = "" }END { printf "%s", n }' bryozoa_12s_fasta_file > bryozoa_12s_fasta_file_tmp
+
+grep ">" bryozoa_12s_fasta_file_tmp | cut -d ">" -f 2 | cut -d " " -f 1 > bryozoa_12s_AccessionNumbers
+
+paste \
+<(cat bryozoa_12s_AccessionNumbers) \
+<(sed '/^>/d' bryozoa_12s_fasta_file_tmp) > bryozoa_12s_accessionNumbers_seqs_linking_table
+#196
+
+fgrep -w -f bryozoa_12s_AccessionNumbers nucl_gb.accession2taxid > bryozoa_12s_accessionNumbers_taxids_linking_table
+
+awk 'BEGIN {FS=OFS="\t"} {print $2,$3}' bryozoa_12s_accessionNumbers_taxids_linking_table > bryozoa_12s_accessionNumbers_taxids_linking_table_final
+
+awk -F '\t' '{print $2}'  bryozoa_12s_accessionNumbers_taxids_linking_table_final | sort | uniq > bryozoa_12s_Taxids_uniq
+wc -l bryozoa_12s_Taxids_uniq 
+# 91
+
+join -t "|" -1 1 -2 1 -a 1 bryozoa_12s_Taxids_uniq /home/qiulab/data/meihong/database/taxdump/rankedlineage_sorted > bryozoa_12s_Taxids_taxonomic_lineages_linking_table
+wc -l bryozoa_12s_Taxids_taxonomic_lineages_linking_table
+# 91
+
+awk -F '|' '{print $2}' bryozoa_12s_Taxids_taxonomic_lineages_linking_table | grep -c '^$'    
+# 0
+
+paste \
+  <(awk -F "|" '$2!="" {print $1}' bryozoa_12s_Taxids_taxonomic_lineages_linking_table) \
+  <(awk -F "|" 'BEGIN {OFS=""} $2!="" {print "k__",$9,"; p__",$8,"; c__",$7,"; o__",$6,"; f__",$5,"; g__",$4,"; s__",$2}' bryozoa_12s_Taxids_taxonomic_lineages_linking_table) > bryozoa_12s_Taxids_taxonomic_lineages_linking_table_reformatted
+
+paste -d "" \
+  <(awk -F 's__' '{OFS=""} {print $1,"s__"}' bryozoa_12s_Taxids_taxonomic_lineages_linking_table_reformatted) \
+  <(awk -F 's__' '{print $2}' bryozoa_12s_Taxids_taxonomic_lineages_linking_table_reformatted | cut -d " " -f 2-) > bryozoa_12s_Taxids_taxonomic_lineages_linking_table_final
+
+join -t $'\t' -1 2 -2 1 -a 1 \
+    <(sort -t $'\t' -n -k 2 bryozoa_12s_accessionNumbers_taxids_linking_table_final) \
+    <(sort -t $'\t' -n -k 1 bryozoa_12s_Taxids_taxonomic_lineages_linking_table_final) | \
+    awk 'BEGIN {FS=OFS="\t"} {print $2, $1, $3}' > bryozoa_12s_AccessionNumbers_taxids_Taxonomic_lineages_linking_table
+
+join -t $'\t' -1 1 -2 1 -a 1 \
+      <(sort -t $'\t' -k 1b,1 bryozoa_12s_AccessionNumbers_taxids_Taxonomic_lineages_linking_table)\
+      <(sort -t $'\t' -k 1b,1 bryozoa_12s_accessionNumbers_seqs_linking_table) > bryozoa_12s_Global_table
+#196
+
+awk -F '\t' '{print $1}' bryozoa_12s_Global_table | grep -c "^$"       # 0 => Ok
+awk -F '\t' '{print $2}' bryozoa_12s_Global_table | grep -c "^$"       # 0 => Ok
+awk -F '\t' '{print $3}' bryozoa_12s_Global_table | grep -c "^$"       # 0 => Ok
+awk -F '\t' '{print $4}' bryozoa_12s_Global_table | grep -c "^$"       # 0 => Ok
+
+Integrate 4 markers of 17 phylum together named  ncbi_total_form
+
+
+### combine the sequences of BOLD database and GenBank Database
+
+awk -F '\t' 'BEGIN {OFS=""} {print ">",$1,"\n",$4}' ncbi_total_form | sed 's/-//g' > ncbi_total_Fasta_file
+
+awk 'BEGIN {FS=OFS="\t"} {print $1,$3}' ncbi_total_form > ncbi_total_Taxonomic_lineages
+
+awk -F '\t' 'BEGIN {OFS=""} {print ">",$1,"\n",$3}' boldfish_form| sed 's/-//g' > boldfish_form_Fasta_file
+
+awk 'BEGIN {FS=OFS="\t"} {print $1,$2}' boldfish_form > boldfish_form_Taxonomic_lineages
+
+awk -F '\t' 'BEGIN {OFS=""} {print ">",$1,"\n",$3}' boldma_form | sed 's/-//g' > boldma_form_Fasta_file
+
+awk 'BEGIN {FS=OFS="\t"} {print $1,$2}' boldma_form > boldma_form_Taxonomic_lineages
+
+
+cat boldfish_form_Fasta_file boldma_form_Fasta_file ncbi_total_Fasta_file > hk_Fasta_file
+cat boldfish_form_Taxonomic_lineages boldma_form_Taxonomic_lineages ncbi_total_Taxonomic_lineages > hk_Taxonomic_lineages
+
+
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path hk_Fasta_file \
+  --output-path hk_Fasta_file.qza
+
+
+qiime rescript cull-seqs \
+    --i-sequences hk_Fasta_file.qza \
+    --p-homopolymer-length 12 \
+    --p-n-jobs 10 \
+    --o-clean-sequences hk_Fasta_file_tmp.qza
+
+mv hk_Fasta_file_tmp.qza hk_Fasta_file.qza
+
+qiime tools export \
+  --input-path hk_Fasta_file.qza \
+  --output-path .
+
+fgrep -v -f \
+  <(cat \
+    <(grep ">" dna-sequences.fasta | cut -d ">" -f 2) \
+    <(cut -d $'\t' -f 1 hk_Taxonomic_lineages) | sort | uniq -u) \
+  hk_Taxonomic_lineages > hk_Taxonomic_lineages_tmp
+
+mv hk_Taxonomic_lineages_tmp hk_Taxonomic_lineages
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path hk_Taxonomic_lineages \
+  --output-path hk_Taxonomic_lineages.qza
+
+qiime tools export \
+  --input-path hk_Fasta_file.qza \
+  --output-path . && mv dna-sequences.fasta Exported_fasta_file.fasta
+
+qiime tools export \
+  --input-path hk_Taxonomic_lineages.qza \
+  --output-path . && awk 'NR>1' taxonomy.tsv > Exported_taxonomic_lineages.tsv
+
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path Exported_fasta_file.fasta \
+  --output-path hk_fasta_file_2023_08_17.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path Exported_taxonomic_lineages.tsv \
+  --output-path hk_taxonomic_lineages_2023_08_17.qza
+
+qiime feature-classifier fit-classifier-naive-bayes \
+  --i-reference-reads hk_fasta_file_2023_08_17.qza \
+  --i-reference-taxonomy hk_taxonomic_lineages_2023_08_17.qza \
+  --o-classifier hk_classifier_2023_08_17.qza
